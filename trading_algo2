@@ -1,0 +1,217 @@
+__author__ = 'User'
+
+from sklearn.ensemble import RandomForestClassifier
+import pickle
+import xml.etree.ElementTree as etree
+from subprocess import check_output as qx
+import mysql.connector
+
+def get_predictor(stock, date):
+    file = open('E:\depth_' + date + '_2015.csv.pkl', 'rb')
+    data = pickle.load(file)
+    model = data[0]
+    code = data[1]
+    return model[code.index(stock)]
+
+
+def get_portfolio(type, code):
+    try:
+        cnx = mysql.connector.connect(user='root', password='root', database='test')
+        cursor = cnx.cursor()
+        if type == "B":
+            query = 'SELECT code, type, quantity, ltp, id from `test`.`portfolio` where status = "P" and type = "B" and code = "' + code + '" order by ltp desc;'
+        elif type == "S":
+            query = 'SELECT code, type, quantity, ltp, id from `test`.`portfolio` where status = "P" and type = "S" and code = "' + code + '" order by ltp asc;'
+        cursor.execute(query)
+        data = list(cursor)
+        cursor.close()
+        cnx.close()
+    except:
+        data = []
+    return data
+
+
+def write_portfolio(code, type, quantity, ltp, status):
+    cnx = mysql.connector.connect(user='root', password='root', database='test')
+    cursor = cnx.cursor()
+    query = 'insert into `portfolio` values("' + code + '", "' + type + '", ' + str(quantity) + ', "' + status + '", ' + str(ltp) + ', 0);'
+    cursor.execute(query)
+    cnx.commit()
+    cursor.close()
+    cnx.close()
+
+
+def short_portfolio(id):
+    cnx = mysql.connector.connect(user='root', password='root', database='test')
+    cursor = cnx.cursor()
+    query = 'update `portfolio` set status = "E" where id = ' + str(id) + ';'
+    cursor.execute(query)
+    cnx.commit()
+    cursor.close()
+    cnx.close()
+
+
+def get_data(code):
+    fp = open("E:\depth\\" + code + ".txt")
+    xmlf = ""
+    feat = []
+    for i, line in enumerate(fp):
+        if i in range(8, 129):
+            xmlf += line
+        elif i > 128:
+            break
+    fp.close()
+    root = etree.fromstring(xmlf)
+    counter = 0
+    for child in root:
+        if counter == 0:
+            temp = child.text
+        elif counter == 13:
+            feat.append(temp)
+            global ltp
+            ltp = temp
+        else:
+            feat.append(child.text)
+        counter += 1
+    return feat[0:42]
+
+q_flag = 0
+
+
+def return_predictions(code, model, feat):
+    type = model.predict(feat)
+    global q_flag
+    if type[0] == "s1":
+        if q_flag == 15:
+            return [code, "S", 20, float(feat[12]), 0]
+        elif q_flag == 6:
+            return [code, "S", 10, float(feat[12]), 0]
+        else:
+            return [code, "S", 2, float(feat[12]), 0]
+    elif type[0] == "b1":
+        if q_flag == 15:
+            return [code, "B", 20, float(feat[12]), 0]
+        elif q_flag == 6:
+            return [code, "B", 10, float(feat[12]), 0]
+        else:
+            return [code, "B", 2, float(feat[12]), 0]
+    else:
+        return [code, "X", 1, float(feat[12]), 0]
+
+
+def get_money():
+    cmd = r'C:\Users\User\Desktop\ShareKhan\get_money\Debug\get_money.exe'
+    #return float(qx(cmd))
+    return 50000
+
+
+def place_order(stock, type, qty):
+    cmd = r'C:\Users\User\Desktop\ShareKhan\place_oder\Debug\place_oder.exe'
+    arg = "afterhour=N&s=" + stock + "&ex=NSE&b=" + type + "&qty=" + str(qty) + "&price=0"
+    argument = [cmd, arg]
+    qx(argument)
+    global q_flag
+    if q_flag == 0:
+        q_flag = 6
+    elif q_flag == 6:
+        q_flag = 15
+
+
+def combine_rfs(rf_a, rf_b):
+    rf_a.estimators_ += rf_b.estimators_
+    rf_a.n_estimators = len(rf_a.estimators_)
+    return rf_a
+
+
+code = ["CANBK", "GODREJIND", "RELCAPITAL", "ZEEL"]
+order_limit = 5
+i = int(input("enter stock id (can, god, rel, zeel) : "))
+power = get_money()
+
+model = get_predictor(code[i], '31_03')
+model2 = get_predictor(code[i], '01_04')
+model = combine_rfs(model, model2)
+
+while 1:
+    buy_orders = get_portfolio("B", code[i])
+    sell_orders = get_portfolio("S", code[i])
+    short_qty = 0
+    if not buy_orders:
+        b_min = 999999999
+        b_qty = 0
+        b_counter = 0
+    else:
+        b_min = min([row[3] for row in buy_orders])
+        b_qty = sum([row[2] for row in buy_orders])
+        b_counter = buy_orders.__len__()
+    if not sell_orders:
+        s_max = -1
+        s_qty = 0
+        s_counter = 0
+    else:
+        s_max = max([row[3] for row in sell_orders])
+        s_qty = sum([row[2] for row in sell_orders])
+        s_counter = sell_orders.__len__()
+
+    try:
+        data = [return_predictions(code[i], model, get_data(code[i]))]
+    except:
+        continue
+
+    if data[0][1] == 'B' and data[0][3] <= b_min - 0.5 and b_counter < order_limit and power - (data[0][3] * data[0][2]) > 0:
+        if s_qty != 0:
+            for row in sell_orders:
+                if row[3] > 0.6 + data[0][3]:
+                    short_qty += row[2]
+                    short_portfolio(row[4])
+                else:
+                    break
+            if short_qty != 0:
+                place_order(data[0][0], "BM", short_qty + data[0][2])  # keeping the dynamics
+                write_portfolio(data[0][0], "B", data[0][2], data[0][3], "P")
+                write_portfolio(data[0][0], "B", short_qty, data[0][3], "E")
+        else:
+            place_order(data[0][0], "BM", data[0][2])
+            write_portfolio(data[0][0], "B", data[0][2], data[0][3], "P")
+            power = get_money()
+    elif data[0][1] == 'S' and data[0][3] >= s_max + 0.5 and s_counter < order_limit and power - (data[0][3] * data[0][2]) > 0:
+        if b_qty != 0:
+            for row in buy_orders:
+                if row[3] < data[0][3] - 0.6:
+                    short_qty += row[2]
+                    short_portfolio(row[4])
+                else:
+                    break
+            if short_qty != 0:
+                place_order(data[0][0], "SM", short_qty + data[0][2])
+                write_portfolio(data[0][0], "S", data[0][2], data[0][3], "P")
+                write_portfolio(data[0][0], "S", short_qty, data[0][3], "E")
+        else:
+            place_order(data[0][0], "SM", data[0][2])
+            write_portfolio(data[0][0], "S", data[0][2], data[0][3], "P")
+            power = get_money()
+    else:
+        if s_qty != 0 and s_qty > b_qty:
+            for row in sell_orders:
+                if row[3] > 0.6 + data[0][3]:
+                    short_qty += row[2]
+                    short_portfolio(row[4])
+                else:
+                    break
+            if short_qty != 0:
+                place_order(data[0][0], "BM", short_qty + data[0][2])
+                write_portfolio(data[0][0], "B", data[0][2], data[0][3], "P")
+                write_portfolio(data[0][0], "B", short_qty, data[0][3], "E")
+        elif b_qty != 0 and b_qty > s_qty:
+            for row in buy_orders:
+                if row[3] < data[0][3] - 0.6:
+                    short_qty += row[2]
+                    short_portfolio(row[4])
+                else:
+                    break
+            if short_qty != 0:
+                place_order(data[0][0], "SM", short_qty + data[0][2])
+                write_portfolio(data[0][0], "S", data[0][2], data[0][3], "P")
+                write_portfolio(data[0][0], "S", short_qty, data[0][3], "E")
+    #if profit_analysis(final_orders, code) < -1000:
+        #break
