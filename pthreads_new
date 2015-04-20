@@ -1,0 +1,106 @@
+// pthreads.cpp : Defines the entry point for the console application.
+//
+
+#include "stdafx.h"
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <sys/stat.h>
+#include <time.h>
+#include <windows.h>
+#include <pthread.h>
+
+using namespace std;
+
+#define NUM_THREADS     51
+
+struct thread_data{
+	int stock;
+};
+string stocks[51] = { "ADANIENT", "ADANIPORTS", "AMBUJACEM", "APOLLOTYRE", "ARVIND", "AXISBANK", "BANKINDIA", "BHARTIARTL", "BHEL", "BIOCON", "CANBK", "COALINDIA", "DABUR", "DLF", "EXIDEIND", "GAIL", "GODREJIND", "HAVELLS", "HEXAWARE", "ICICIBANK", "IDEA", "IDFC", "IGL", "INDIACEM", "IOC", "IRB", "ITC", "JSWENERGY", "KTKBANK", "LICHSGFIN", "MMFIN", "ONGC", "ORIENTBANK", "PETRONET", "PFC", "POWERGRID", "RECLTD", "RELCAPITAL", "RELINFRA", "SBIN", "SUNTV", "TATACHEM", "TATACOMM", "TATAMOTORS", "TATAMTRDVR", "TATASTEEL", "TITAN", "UNIONBANK", "UPL", "VOLTAS", "ZEEL" };
+
+void *get_data(void *threadarg)
+{
+	struct thread_data *my_data;
+	my_data = (struct thread_data *) threadarg;
+	ofstream myfile;
+	string locn = "E:/depth/" + to_string(my_data->stock) + ".txt";
+	myfile.open(locn);
+	myfile << my_data->stock;
+	myfile.close();
+	locn = "C:/Users/zxingz/Desktop/ShareKhan/get_depth/Debug/get_depth.exe < " + locn;
+	system(locn.c_str());
+	cout << my_data->stock;
+	pthread_exit(NULL);
+	return 0;
+}
+
+void exec_all(){
+	system("C:/Users/zxingz/Desktop/ShareKhan/cookies_new/Debug/cookies_new.exe");
+	system("cd /windows/system32 & taskkill /F /IM get_depth.exe /T");
+	system("cd /windows/system32 & taskkill /F /IM save_depth.exe /T");
+	system("cd /windows/system32 & taskkill /F /IM cmd.exe /T");
+	pthread_t threads[NUM_THREADS];
+	struct thread_data td[NUM_THREADS];
+	int rc;
+	for (int i = 0; i < NUM_THREADS; i++){
+		td[i].stock = i;
+		rc = pthread_create(&threads[i], NULL,
+			get_data, (void *)&td[i]);
+		if (rc){
+			cout << "Error:unable to create thread," << rc << endl;
+		}
+	}
+	system("C:/Users/zxingz/Desktop/ShareKhan/save_depth/Debug/save_depth.exe");
+	Sleep(60000);
+}
+
+void ressurect(int num){
+	ifstream myfile;
+	string locn = "E:/depth/" + to_string(num) + ".txt";
+	int file = 0;
+	myfile.open(locn);
+	myfile >> file;
+	myfile.close();
+	locn = "cd /windows/system32 & taskkill /F /pid " + to_string(file) + " /T";
+	system(locn.c_str());
+	ofstream myfile1;
+	myfile1.open(locn);
+	myfile1 << num;
+	myfile1.close();
+	locn = "C:/Users/zxingz/Desktop/ShareKhan/get_depth/Debug/get_depth.exe < E:/depth/" + to_string(num) + ".txt";
+	system(locn.c_str());
+}
+
+int main()
+{
+	exec_all();
+	string locn = "";
+	int stock_timer[51][2];
+	struct tm* clock;
+	struct stat attrib;
+	for (int i = 0; i < 51; i++){
+		locn = "E:/depth/" + stocks[i] + ".txt";
+		stat(locn.c_str(), &attrib);
+		clock = gmtime(&(attrib.st_mtime));
+		stock_timer[i][0] = clock->tm_min;
+		stock_timer[i][1] = clock->tm_hour;
+	}
+	while (1){
+		Sleep(60000);
+		for (int i = 0; i < 51; i++){
+			locn = "E:/depth/" + stocks[i] + ".txt";
+			stat(locn.c_str(), &attrib);
+			clock = gmtime(&(attrib.st_mtime));
+			if ((stock_timer[i][0] + (stock_timer[i][0]*60) -clock->tm_min - (clock->tm_hour * 60)) >= 0){
+					stock_timer[i][0] = clock->tm_min;
+					stock_timer[i][1] = clock->tm_hour;
+				}
+			else{
+				ressurect(i);
+				cout << "restarted " << stocks[i] << endl;
+			}
+		}		
+	}
+	return 0;
+}
